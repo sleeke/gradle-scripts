@@ -1,0 +1,131 @@
+import groovy.time.TimeCategory
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.gradle.api.tasks.testing.logging.TestLogEvent
+
+// Implemented as per https://medium.com/@wasyl/pretty-tests-summary-in-gradle-744804dd676c
+// TODO: Extend this prettifier to include Android Instrumented tests
+// Right now, instrumented tests use logcat to output test results, which is overly verbose
+
+ext.testsResults = [] // Container for tests summaries
+ext.success = true
+
+allprojects { project ->
+    tasks.withType(Test) { testTask ->
+        useJUnitPlatform()
+
+        testTask.testLogging { logging ->
+            events TestLogEvent.FAILED,
+                    TestLogEvent.SKIPPED,
+                    TestLogEvent.STANDARD_OUT,
+                    TestLogEvent.STANDARD_ERROR
+
+            exceptionFormat TestExceptionFormat.FULL
+            showExceptions true
+            showCauses true
+            showStackTraces true
+        }
+
+        ignoreFailures = true
+
+        afterSuite { desc, result ->
+            if (desc.parent) return // Only summarize results for whole modules
+
+            if (result.failedTestCount > 0) {
+                rootProject.success = false
+            }
+
+            def positiveStyle = "${(char)27}[32"+"m"
+            def negativeStyle = "${(char)27}[31"+"m"
+            def warningStyle = "${(char)27}[33"+"m"
+            def normalStyle = "${(char)27}[0"+"m"
+
+            String summary = "${testTask.project.name}:${testTask.name} results: " + positiveStyle + "${result.resultType} " + normalStyle +
+                    "(" +
+                    "${result.testCount} tests, " +
+                    positiveStyle + "${result.successfulTestCount} successes, " +
+                    negativeStyle + "${result.failedTestCount} failures, " +
+                    warningStyle + "${result.skippedTestCount} skipped" +
+                    normalStyle + ") " +
+                    "in ${TimeCategory.minus(new Date(result.endTime), new Date(result.startTime))}" +
+                    "\n" +
+                    "Report file: ${testTask.reports.html.entryPoint}"
+
+            // Add reports in `testsResults`, keep failed suites at the end
+            if (result.resultType == TestResult.ResultType.SUCCESS) {
+                rootProject.testsResults.add(0, summary)
+            } else {
+                rootProject.testsResults += summary
+            }
+        }
+    }
+}
+
+gradle.buildFinished {
+    def allResults = rootProject.ext.testsResults
+
+    if (!allResults.isEmpty()) {
+        printResults (allResults, rootProject.ext.success)
+    }
+}
+
+private static void printResults(allResults, success) {
+    def positiveStyle = "${(char)27}[32"+"m"
+    def negativeStyle = "${(char)27}[31"+"m"
+    def normalStyle = "${(char)27}[0"+"m"
+
+    if (success) {
+        println(positiveStyle)
+        printSuccess()
+    }
+    else {
+        println(negativeStyle)
+        printFailure()
+    }
+    println(normalStyle)
+
+    def endspaces = 2
+    def maxLength = allResults*.readLines().flatten().collect { sanitizedStringLength(it) }.max()
+    def lineLength = maxLength + endspaces
+
+    println "┌${"${"─" * lineLength}"}┐"
+
+    println allResults.collect {
+        it.readLines().collect {
+            "│ " + it + " " * (maxLength - sanitizedStringLength(it)) + " │"
+        }.join("\n")
+    }.join("\n├${"${"─" * lineLength}"}┤\n")
+
+    println "└${"${"─" * lineLength}"}┘"
+}
+
+private static int sanitizedStringLength(unsanitizedString) {
+    def prevLength = unsanitizedString.length() + 1
+    def sanitizedString = unsanitizedString
+
+    while (sanitizedString.length() < prevLength) {
+        prevLength = sanitizedString.length()
+        sanitizedString = sanitizedString - "${(char)27}" - ~ /\[[0-9]{1,2}m/
+    }
+
+    return sanitizedString.length()
+}
+
+private static void printSuccess() {
+    println()
+    println ' █████╗ ██╗     ██╗          ██████╗  ██████╗  ██████╗ ██████╗         ██╗'
+    println '██╔══██╗██║     ██║         ██╔════╝ ██╔═══██╗██╔═══██╗██╔══██╗    ██╗ ╚██╗'
+    println '███████║██║     ██║         ██║  ███╗██║   ██║██║   ██║██║  ██║    ╚═╝  ██║'
+    println '██╔══██║██║     ██║         ██║   ██║██║   ██║██║   ██║██║  ██║    ██╗  ██║'
+    println '██║  ██║███████╗███████╗    ╚██████╔╝╚██████╔╝╚██████╔╝██████╔╝    ╚═╝ ██╔╝'
+    println '╚═╝  ╚═╝╚══════╝╚══════╝     ╚═════╝  ╚═════╝  ╚═════╝ ╚═════╝         ╚═╝'
+}
+
+private static void printFailure() {
+    println()
+    println '██╗   ██╗██╗  ██╗         ██████╗ ██╗  ██╗         ██╗'
+    println '██║   ██║██║  ██║        ██╔═══██╗██║  ██║    ██╗ ██╔╝'
+    println '██║   ██║███████║ █████╗ ██║   ██║███████║    ╚═╝ ██║'
+    println '██║   ██║██╔══██║ ╚════╝ ██║   ██║██╔══██║    ██╗ ██║'
+    println '╚██████╔╝██║  ██║        ╚██████╔╝██║  ██║    ╚═╝ ╚██╗'
+    println ' ╚═════╝ ╚═╝  ╚═╝         ╚═════╝ ╚═╝  ╚═╝         ╚═╝'
+}
